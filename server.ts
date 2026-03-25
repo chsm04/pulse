@@ -11,7 +11,7 @@ import { join } from 'path'
 
 const PORT = Number(process.env.PULSE_PORT ?? 3400)
 const STATE_DIR = join(homedir(), '.pulse')
-const PPID = process.ppid
+const SESSION_KEY = process.env.CLAUDE_CODE_SSE_PORT ?? String(process.ppid)
 let seq = 0
 let boundPort = PORT
 
@@ -21,12 +21,12 @@ function nextId() {
 
 function savePort(port: number): void {
   mkdirSync(STATE_DIR, { recursive: true })
-  writeFileSync(join(STATE_DIR, `${PPID}.port`), String(port))
-  process.stderr.write(`[pulse] port file: ~/.pulse/${PPID}.port → ${port}\n`)
+  writeFileSync(join(STATE_DIR, `${SESSION_KEY}.port`), String(port))
+  process.stderr.write(`[pulse] port file: ~/.pulse/${SESSION_KEY}.port → ${port}\n`)
 }
 
 function cleanupPort(): void {
-  try { unlinkSync(join(STATE_DIR, `${PPID}.port`)) } catch {}
+  try { unlinkSync(join(STATE_DIR, `${SESSION_KEY}.port`)) } catch {}
 }
 
 function cleanupStale(): void {
@@ -125,7 +125,7 @@ function tryServe(port: number, attempt = 0): void {
         const url = new URL(req.url)
 
         if (url.pathname === '/health') {
-          return Response.json({ status: 'ok', port: boundPort, ppid: PPID })
+          return Response.json({ status: 'ok', port: boundPort, session: SESSION_KEY })
         }
 
         if (url.pathname === '/notify' && req.method === 'POST') {
