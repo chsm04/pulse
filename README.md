@@ -6,7 +6,7 @@ No Discord, no Telegram — just a single HTTP POST to push messages into your c
 
 **[한국어](./README.ko.md)**
 
-https://github.com/user-attachments/assets/c603b2a6-95da-4cb0-9604-f2f85ec24ca0
+https://github.com/user-attachments/assets/7bf4442e-8be9-4a6b-bfa0-b6dd4d41245e
 
 ## Why Pulse?
 
@@ -112,6 +112,10 @@ curl localhost:3400/health
 Requires `gh`, `jq`, `curl`.
 
 ### Build Error Auto-Report
+
+https://github.com/user-attachments/assets/7bf4442e-8be9-4a6b-bfa0-b6dd4d41245e
+
+[`examples/build-notify.sh`](./examples/build-notify.sh) — a build wrapper that sends error logs to your session on failure.
 
 Add to your build script — on failure, error logs are sent straight to your session:
 
