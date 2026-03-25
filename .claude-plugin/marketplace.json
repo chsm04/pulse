@@ -1,0 +1,12 @@
+{
+  "name": "pulse",
+  "description": "Plugin marketplace for Pulse channel",
+  "plugins": [
+    {
+      "name": "pulse",
+      "source": "./",
+      "description": "Local HTTP channel for pushing notifications into Claude Code sessions.",
+      "version": "0.1.0"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+#!/bin/sh
+echo "🔨 Running pre-push check..."
+echo "  → TypeScript check"
+cd "$(git rev-parse --show-toplevel)" && bun x tsc --noEmit
+if [ $? -ne 0 ]; then
+  echo "❌ TypeScript check failed"
+  exit 1
+fi
+echo "✅ Pre-push check passed"
