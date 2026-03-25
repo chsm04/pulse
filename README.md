@@ -6,6 +6,12 @@ No Discord, no Telegram — just a single HTTP POST to push messages into your c
 
 **[한국어](./README.ko.md)**
 
+## Why Pulse?
+
+Claude Code's Channels require external messaging services like Discord or Slack to push messages into a session. This creates unnecessary friction — you need a bot token, an account, network access to a third-party service, all just to send a simple notification from a local script.
+
+Pulse is an **event abstraction layer** that removes this dependency. Any local process that can make an HTTP call can now communicate with your Claude Code session directly, without routing through an external messenger.
+
 ## Concept
 
 ```
