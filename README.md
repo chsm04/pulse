@@ -71,7 +71,15 @@ curl localhost:3400/health
 
 ### CI/CD Result Notification
 
-Use a Claude Code hook (PostToolUse) to track CI status after PR creation and send results via pulse:
+[`examples/ci-watcher.sh`](./examples/ci-watcher.sh) — a ready-to-use hook script that watches GitHub Actions runs and reports results via Pulse.
+
+**Features:**
+- Finds Pulse port automatically via Claude Code PID
+- Deduplicates notifications (no double alerts from `git push` + `gh pr create`)
+- Supports `.ci-watch-ignore` for skipping specific workflows
+- Tracks multiple concurrent runs, reports each as it completes
+
+**Setup** — add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -82,7 +90,8 @@ Use a Claude Code hook (PostToolUse) to track CI status after PR creation and se
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c '...gh run watch...; if [ $EXIT -ne 0 ]; then curl -s -X POST localhost:3400/notify -H \"Content-Type: application/json\" -d \"{\\\"text\\\":\\\"CI failed!\\\",\\\"source\\\":\\\"ci\\\",\\\"level\\\":\\\"error\\\"}\"; fi'",
+            "command": "bash /path/to/ci-watcher.sh",
+            "statusMessage": "CI watcher started...",
             "async": true
           }
         ]
@@ -91,6 +100,8 @@ Use a Claude Code hook (PostToolUse) to track CI status after PR creation and se
   }
 }
 ```
+
+Requires `gh`, `jq`, `curl`.
 
 ### Deploy Notification
 
@@ -128,7 +139,6 @@ fi
 | Env Variable | Default | Description |
 |-------------|---------|-------------|
 | `PULSE_PORT` | `3400` | HTTP server port |
-| `CLAUDE_CODE_SSE_PORT` | — | _(deprecated, ignored)_ — session key is now derived from Claude Code PID |
 
 ## Limitations
 
