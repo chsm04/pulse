@@ -5,16 +5,50 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
+import { mkdirSync, writeFileSync, unlinkSync, readdirSync } from 'fs'
+import { homedir } from 'os'
+import { join } from 'path'
 
 const PORT = Number(process.env.PULSE_PORT ?? 3400)
+const STATE_DIR = join(homedir(), '.pulse')
+const PPID = process.ppid
 let seq = 0
+let boundPort = PORT
 
 function nextId() {
   return `p-${Date.now()}-${++seq}`
 }
 
+function savePort(port: number): void {
+  mkdirSync(STATE_DIR, { recursive: true })
+  writeFileSync(join(STATE_DIR, `${PPID}.port`), String(port))
+  process.stderr.write(`[pulse] port file: ~/.pulse/${PPID}.port → ${port}\n`)
+}
+
+function cleanupPort(): void {
+  try { unlinkSync(join(STATE_DIR, `${PPID}.port`)) } catch {}
+}
+
+function cleanupStale(): void {
+  try {
+    for (const f of readdirSync(STATE_DIR)) {
+      if (!f.endsWith('.port')) continue
+      const pid = parseInt(f.replace('.port', ''), 10)
+      if (isNaN(pid)) continue
+      try { process.kill(pid, 0) } catch {
+        // process doesn't exist, remove stale port file
+        try { unlinkSync(join(STATE_DIR, f)) } catch {}
+      }
+    }
+  } catch {}
+}
+
+process.on('exit', cleanupPort)
+process.on('SIGINT', () => { cleanupPort(); process.exit(0) })
+process.on('SIGTERM', () => { cleanupPort(); process.exit(0) })
+
 const mcp = new Server(
-  { name: 'pulse', version: '0.1.0' },
+  { name: 'pulse', version: '0.0.1' },
   {
     capabilities: {
       tools: {},
@@ -80,35 +114,53 @@ function deliver(text: string, source?: string, level?: string): string {
   return id
 }
 
-Bun.serve({
-  port: PORT,
-  hostname: '127.0.0.1',
-  async fetch(req) {
-    const url = new URL(req.url)
+const MAX_PORT_ATTEMPTS = 10
 
-    if (url.pathname === '/health') {
-      return Response.json({ status: 'ok' })
-    }
+function tryServe(port: number, attempt = 0): void {
+  try {
+    Bun.serve({
+      port,
+      hostname: '127.0.0.1',
+      async fetch(req) {
+        const url = new URL(req.url)
 
-    if (url.pathname === '/notify' && req.method === 'POST') {
-      try {
-        const body = await req.json() as { text?: string; source?: string; level?: string }
-        if (!body.text) {
-          return Response.json({ error: 'text is required' }, { status: 400 })
+        if (url.pathname === '/health') {
+          return Response.json({ status: 'ok', port: boundPort, ppid: PPID })
         }
-        const level = body.level ?? 'info'
-        if (!['info', 'warn', 'error'].includes(level)) {
-          return Response.json({ error: 'level must be info, warn, or error' }, { status: 400 })
+
+        if (url.pathname === '/notify' && req.method === 'POST') {
+          try {
+            const body = await req.json() as { text?: string; source?: string; level?: string }
+            if (!body.text) {
+              return Response.json({ error: 'text is required' }, { status: 400 })
+            }
+            const level = body.level ?? 'info'
+            if (!['info', 'warn', 'error'].includes(level)) {
+              return Response.json({ error: 'level must be info, warn, or error' }, { status: 400 })
+            }
+            const id = deliver(body.text, body.source, level)
+            return new Response(null, { status: 204, headers: { 'x-pulse-id': id } })
+          } catch {
+            return Response.json({ error: 'invalid json' }, { status: 400 })
+          }
         }
-        const id = deliver(body.text, body.source, level)
-        return new Response(null, { status: 204, headers: { 'x-pulse-id': id } })
-      } catch {
-        return Response.json({ error: 'invalid json' }, { status: 400 })
-      }
+
+        return Response.json({ error: 'not found' }, { status: 404 })
+      },
+    })
+    boundPort = port
+    cleanupStale()
+    savePort(port)
+    process.stderr.write(`[pulse] listening on http://127.0.0.1:${port}\n`)
+  } catch {
+    if (attempt < MAX_PORT_ATTEMPTS - 1) {
+      process.stderr.write(`[pulse] port ${port} in use, trying ${port + 1}...\n`)
+      tryServe(port + 1, attempt + 1)
+    } else {
+      process.stderr.write(`[pulse] failed to find available port (tried ${PORT}-${port})\n`)
+      process.exit(1)
     }
+  }
+}
 
-    return Response.json({ error: 'not found' }, { status: 404 })
-  },
-})
-
-process.stderr.write(`[pulse] listening on http://127.0.0.1:${PORT}\n`)
+tryServe(PORT)
