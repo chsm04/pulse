@@ -64,7 +64,7 @@ curl -s -X POST localhost:3400/notify \
 
 ```bash
 curl localhost:3400/health
-# {"status":"ok","port":3400,"session":"12345"}
+# {"status":"ok","port":3400,"session":"12345","pid":67890}
 ```
 
 ## Examples
@@ -128,7 +128,7 @@ fi
 | Env Variable | Default | Description |
 |-------------|---------|-------------|
 | `PULSE_PORT` | `3400` | HTTP server port |
-| `CLAUDE_CODE_SSE_PORT` | — | Claude Code SSE port (used as session key for port file) |
+| `CLAUDE_CODE_SSE_PORT` | — | _(deprecated, ignored)_ — session key is now derived from Claude Code PID |
 
 ## Limitations
 
