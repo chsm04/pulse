@@ -1,8 +1,14 @@
 {
   "name": "claude-channel-pulse",
   "version": "0.0.1",
+  "description": "Local HTTP channel for pushing notifications into Claude Code sessions.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chsm04/pulse.git"
+  },
+  "homepage": "https://github.com/chsm04/pulse",
   "bin": "./server.ts",
   "scripts": {
     "start": "bun install --no-summary && bun server.ts"

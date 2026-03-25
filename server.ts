@@ -5,9 +5,13 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { mkdirSync, writeFileSync, unlinkSync, readdirSync } from 'fs'
+import { mkdirSync, writeFileSync, unlinkSync, readdirSync, readFileSync, statSync } from 'fs'
 import { homedir } from 'os'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'))
 
 const PORT = Number(process.env.PULSE_PORT ?? 3400)
 const STATE_DIR = join(homedir(), '.pulse')
@@ -29,15 +33,28 @@ function cleanupPort(): void {
   try { unlinkSync(join(STATE_DIR, `${SESSION_KEY}.port`)) } catch {}
 }
 
+const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000 // 24 hours
+
 function cleanupStale(): void {
   try {
     for (const f of readdirSync(STATE_DIR)) {
       if (!f.endsWith('.port')) continue
-      const pid = parseInt(f.replace('.port', ''), 10)
-      if (isNaN(pid)) continue
-      try { process.kill(pid, 0) } catch {
-        // process doesn't exist, remove stale port file
-        try { unlinkSync(join(STATE_DIR, f)) } catch {}
+      const filePath = join(STATE_DIR, f)
+      const key = f.replace('.port', '')
+      const pid = parseInt(key, 10)
+      // PID-based session key: check if process is alive
+      if (!isNaN(pid)) {
+        try { process.kill(pid, 0) } catch {
+          try { unlinkSync(filePath) } catch {}
+        }
+        continue
+      }
+      // Non-PID session key (e.g. SSE port): remove if older than 24h
+      try {
+        const age = Date.now() - statSync(filePath).mtimeMs
+        if (age > STALE_THRESHOLD_MS) unlinkSync(filePath)
+      } catch {
+        try { unlinkSync(filePath) } catch {}
       }
     }
   } catch {}
@@ -48,7 +65,7 @@ process.on('SIGINT', () => { cleanupPort(); process.exit(0) })
 process.on('SIGTERM', () => { cleanupPort(); process.exit(0) })
 
 const mcp = new Server(
-  { name: 'pulse', version: '0.0.1' },
+  { name: 'pulse', version: pkg.version },
   {
     capabilities: {
       tools: {},

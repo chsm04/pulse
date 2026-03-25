@@ -64,7 +64,7 @@ curl -s -X POST localhost:3400/notify \
 
 ```bash
 curl localhost:3400/health
-# {"status":"ok"}
+# {"status":"ok","port":3400,"session":"12345"}
 ```
 
 ## 활용 예시
@@ -128,6 +128,7 @@ fi
 | 환경변수 | 기본값 | 설명 |
 |----------|--------|------|
 | `PULSE_PORT` | `3400` | HTTP 서버 포트 |
+| `CLAUDE_CODE_SSE_PORT` | — | Claude Code SSE 포트 (세션 키로 사용) |
 
 ## 제약사항
 
