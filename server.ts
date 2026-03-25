@@ -6,19 +6,54 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { mkdirSync, writeFileSync, unlinkSync, readdirSync, readFileSync, statSync } from 'fs'
+import { mkdirSync, writeFileSync, unlinkSync, readdirSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { spawnSync } from 'child_process'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'))
 
 const PORT = Number(process.env.PULSE_PORT ?? 3400)
 const STATE_DIR = join(homedir(), '.pulse')
-const SESSION_KEY = process.env.CLAUDE_CODE_SSE_PORT ?? String(process.ppid)
+const WATCHDOG_INTERVAL_MS = 5_000
 let seq = 0
 let boundPort = PORT
+
+// ---------------------------------------------------------------------------
+// Session key: find ancestor Claude Code process PID
+// ---------------------------------------------------------------------------
+
+function findAncestorPid(name: string): number | null {
+  let pid = process.ppid
+  while (pid > 1) {
+    const result = spawnSync('ps', ['-p', String(pid), '-o', 'ppid=,comm='], {
+      encoding: 'utf-8',
+    })
+    if (result.status !== 0 || !result.stdout.trim()) return null
+    const line = result.stdout.trim()
+    const match = line.match(/^\s*(\d+)\s+(.+)$/)
+    if (!match) return null
+    const comm = match[2].trim()
+    if (comm === name || comm.endsWith(`/${name}`)) return pid
+    pid = parseInt(match[1], 10)
+  }
+  return null
+}
+
+const _claudePid = findAncestorPid('claude')
+if (!_claudePid) {
+  process.stderr.write('[pulse] could not find ancestor claude process, exiting\n')
+  process.exit(1)
+}
+const CLAUDE_PID: number = _claudePid
+const SESSION_KEY = String(CLAUDE_PID)
+process.stderr.write(`[pulse] session key: claude PID ${SESSION_KEY}\n`)
+
+// ---------------------------------------------------------------------------
+// Port file management
+// ---------------------------------------------------------------------------
 
 function nextId() {
   return `p-${Date.now()}-${++seq}`
@@ -34,36 +69,54 @@ function cleanupPort(): void {
   try { unlinkSync(join(STATE_DIR, `${SESSION_KEY}.port`)) } catch {}
 }
 
-const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000 // 24 hours
+function isProcessAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch { return false }
+}
 
 function cleanupStale(): void {
   try {
     for (const f of readdirSync(STATE_DIR)) {
       if (!f.endsWith('.port')) continue
-      const filePath = join(STATE_DIR, f)
-      const key = f.replace('.port', '')
-      const pid = parseInt(key, 10)
-      // PID-based session key: check if process is alive
-      if (!isNaN(pid)) {
-        try { process.kill(pid, 0) } catch {
-          try { unlinkSync(filePath) } catch {}
-        }
+      const pid = parseInt(f.replace('.port', ''), 10)
+      if (isNaN(pid)) {
+        try { unlinkSync(join(STATE_DIR, f)) } catch {}
         continue
       }
-      // Non-PID session key (e.g. SSE port): remove if older than 24h
-      try {
-        const age = Date.now() - statSync(filePath).mtimeMs
-        if (age > STALE_THRESHOLD_MS) unlinkSync(filePath)
-      } catch {
-        try { unlinkSync(filePath) } catch {}
+      if (!isProcessAlive(pid)) {
+        process.stderr.write(`[pulse] removing stale port file: ${f} (PID ${pid} dead)\n`)
+        try { unlinkSync(join(STATE_DIR, f)) } catch {}
       }
     }
   } catch {}
 }
 
+// ---------------------------------------------------------------------------
+// Watchdog: self-terminate when Claude Code dies
+// ---------------------------------------------------------------------------
+
+function startWatchdog(): void {
+  const timer = setInterval(() => {
+    if (!isProcessAlive(CLAUDE_PID)) {
+      process.stderr.write(`[pulse] claude process ${CLAUDE_PID} gone, shutting down\n`)
+      clearInterval(timer)
+      cleanupPort()
+      process.exit(0)
+    }
+  }, WATCHDOG_INTERVAL_MS)
+  timer.unref()
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
 process.on('exit', cleanupPort)
 process.on('SIGINT', () => { cleanupPort(); process.exit(0) })
 process.on('SIGTERM', () => { cleanupPort(); process.exit(0) })
+
+// ---------------------------------------------------------------------------
+// MCP server
+// ---------------------------------------------------------------------------
 
 const mcp = new Server(
   { name: 'pulse', version: pkg.version },
@@ -110,6 +163,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
 await mcp.connect(new StdioServerTransport())
 
+// ---------------------------------------------------------------------------
+// Notification delivery
+// ---------------------------------------------------------------------------
+
 function deliver(text: string, source?: string, level?: string): string {
   const id = nextId()
   const content = source ? `[${source}] ${text}` : text
@@ -132,6 +189,10 @@ function deliver(text: string, source?: string, level?: string): string {
   return id
 }
 
+// ---------------------------------------------------------------------------
+// HTTP server
+// ---------------------------------------------------------------------------
+
 const MAX_PORT_ATTEMPTS = 10
 
 function tryServe(port: number, attempt = 0): void {
@@ -143,7 +204,12 @@ function tryServe(port: number, attempt = 0): void {
         const url = new URL(req.url)
 
         if (url.pathname === '/health') {
-          return Response.json({ status: 'ok', port: boundPort, session: SESSION_KEY })
+          return Response.json({
+            status: 'ok',
+            port: boundPort,
+            session: SESSION_KEY,
+            pid: process.pid,
+          })
         }
 
         if (url.pathname === '/notify' && req.method === 'POST') {
@@ -169,6 +235,7 @@ function tryServe(port: number, attempt = 0): void {
     boundPort = port
     cleanupStale()
     savePort(port)
+    startWatchdog()
     process.stderr.write(`[pulse] listening on http://127.0.0.1:${port}\n`)
   } catch {
     if (attempt < MAX_PORT_ATTEMPTS - 1) {
