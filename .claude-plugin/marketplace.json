@@ -1,6 +1,9 @@
 {
   "name": "pulse",
   "description": "Plugin marketplace for Pulse channel",
+  "owner": {
+    "name": "chsm04"
+  },
   "plugins": [
     {
       "name": "pulse",
