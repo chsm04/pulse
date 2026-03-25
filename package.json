@@ -1,6 +1,6 @@
 {
   "name": "claude-channel-pulse",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Local HTTP channel for pushing notifications into Claude Code sessions.",
   "license": "MIT",
   "type": "module",

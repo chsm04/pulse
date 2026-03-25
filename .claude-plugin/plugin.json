@@ -1,6 +1,6 @@
 {
   "name": "pulse",
   "description": "Local HTTP channel for pushing notifications into Claude Code sessions. No external services, no tokens.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "keywords": ["pulse", "notification", "local", "channel", "mcp"]
 }
