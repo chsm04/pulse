@@ -1,15 +1,16 @@
 #!/bin/bash
 # CI Watcher — tracks GitHub Actions runs and reports results via Pulse
 #
-# Automatically triggered by Claude Code PostToolUse hook on `gh pr create`
-# or `git push`. Watches all CI runs for the current commit and sends
-# pass/fail notifications to the active Pulse channel.
+# Automatically triggered by Claude Code PostToolUse hook on `gh pr create`,
+# `git push`, or `gh pr merge`. Watches all CI/CD runs for the relevant
+# commit and sends pass/fail notifications to the active Pulse channel.
 #
 # Features:
 #   - Finds Pulse port via ancestor Claude Code PID (session-aware)
 #   - Deduplicates notifications (lock file per commit + session)
 #   - Supports .ci-watch-ignore for skipping specific workflows
 #   - Tracks multiple concurrent runs, reports each as it completes
+#   - Tracks post-merge CI/CD runs (e.g. deploy pipelines on main)
 #   - 10 minute timeout with warning notification
 #
 # Requirements: gh, jq, curl
@@ -46,17 +47,20 @@ set -euo pipefail
 # Parse hook input
 # ---------------------------------------------------------------------------
 
-CMD=$(jq -r '.tool_input.command // empty' 2>/dev/null)
+STDIN_JSON=$(cat)
+CMD=$(echo "$STDIN_JSON" | jq -r '.tool_input.command // empty' 2>/dev/null)
 if [ -z "$CMD" ]; then exit 0; fi
 
-# Only trigger on gh pr create or git push (not --delete)
-if echo "$CMD" | grep -qE "gh pr create"; then
-  :
+# Determine trigger type
+TRIGGER=""
+if echo "$CMD" | grep -qE "gh pr merge"; then
+  TRIGGER="merge"
+elif echo "$CMD" | grep -qE "gh pr create"; then
+  TRIGGER="pr"
 elif echo "$CMD" | grep -qE "git push" && ! echo "$CMD" | grep -qE "--delete|-d"; then
-  :
-else
-  exit 0
+  TRIGGER="push"
 fi
+if [ -z "$TRIGGER" ]; then exit 0; fi
 
 # ---------------------------------------------------------------------------
 # Resolve Pulse port via ancestor Claude Code PID
@@ -83,21 +87,6 @@ PULSE_PORT=$(cat ~/.pulse/"$CLAUDE_PID".port 2>/dev/null || echo "")
 if [ -z "$PULSE_PORT" ]; then exit 0; fi
 
 # ---------------------------------------------------------------------------
-# Dedup: skip if another ci-watcher is already tracking this commit
-# ---------------------------------------------------------------------------
-
-SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-if [ -z "$SHA" ]; then exit 0; fi
-
-LOCK_DIR=~/.pulse/locks
-mkdir -p "$LOCK_DIR"
-LOCK_FILE="$LOCK_DIR/${CLAUDE_PID}-${SHA}.lock"
-if ! mkdir "$LOCK_FILE" 2>/dev/null; then
-  exit 0
-fi
-trap 'rmdir "$LOCK_FILE" 2>/dev/null' EXIT
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -109,12 +98,50 @@ notify() {
     -d "{\"text\":\"$text\",\"source\":\"ci\",\"level\":\"$level\"}" 2>/dev/null || true
 }
 
+# Get repo
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+if [ -z "$REPO" ]; then exit 0; fi
+
+# ---------------------------------------------------------------------------
+# Resolve commit SHA based on trigger type
+# ---------------------------------------------------------------------------
+
+if [ "$TRIGGER" = "merge" ]; then
+  # Extract PR number from command (gh pr merge 123 or gh pr merge URL)
+  PR_NUM=$(echo "$CMD" | grep -oE 'gh pr merge [^ ]+' | awk '{print $NF}' | grep -oE '[0-9]+' | head -1)
+  if [ -z "$PR_NUM" ]; then exit 0; fi
+
+  # Get the merge commit SHA from the merged PR
+  PR_JSON=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeCommit,baseRefName 2>/dev/null || echo "{}")
+  SHA=$(echo "$PR_JSON" | jq -r '.mergeCommit.oid // empty' 2>/dev/null)
+
+  if [ -z "$SHA" ]; then
+    # Merge might not be complete yet, wait and retry
+    sleep 5
+    PR_JSON=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeCommit,baseRefName 2>/dev/null || echo "{}")
+    SHA=$(echo "$PR_JSON" | jq -r '.mergeCommit.oid // empty' 2>/dev/null)
+  fi
+  if [ -z "$SHA" ]; then exit 0; fi
+else
+  SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+  if [ -z "$SHA" ]; then exit 0; fi
+fi
+
+# ---------------------------------------------------------------------------
+# Dedup: skip if another ci-watcher is already tracking this commit
+# ---------------------------------------------------------------------------
+
+LOCK_DIR=~/.pulse/locks
+mkdir -p "$LOCK_DIR"
+LOCK_FILE="$LOCK_DIR/${CLAUDE_PID}-${SHA}.lock"
+if ! mkdir "$LOCK_FILE" 2>/dev/null; then
+  exit 0
+fi
+trap 'rmdir "$LOCK_FILE" 2>/dev/null' EXIT
+
 # ---------------------------------------------------------------------------
 # Load .ci-watch-ignore
 # ---------------------------------------------------------------------------
-
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
-if [ -z "$REPO" ]; then exit 0; fi
 
 IGNORE_FILE="$(git rev-parse --show-toplevel 2>/dev/null)/.ci-watch-ignore"
 IGNORE_PATTERNS=()
