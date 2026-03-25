@@ -8,9 +8,15 @@ No Discord, no Telegram — just a single HTTP POST to push messages into your c
 
 ## Why Pulse?
 
-Claude Code's Channels require external messaging services like Discord or Slack to push messages into a session. This creates unnecessary friction — you need a bot token, an account, network access to a third-party service, all just to send a simple notification from a local script.
+Checking your email every time CI fails, then telling the agent "go check the CI result"?
 
-Pulse is an **event abstraction layer** that removes this dependency. Any local process that can make an HTTP call can now communicate with your Claude Code session directly, without routing through an external messenger.
+Copying and pasting build error logs into the session manually?
+
+Running a deploy script and opening another terminal to see if it finished?
+
+With Pulse, you don't have to. Background processes send messages directly to your session.
+
+Pulse is an **event abstraction layer** built on Claude Code's [Channels](https://docs.anthropic.com/en/docs/claude-code/channels) protocol. Any local process that can make an HTTP call can communicate with your Claude Code session directly — no external messengers, no bot tokens, no accounts.
 
 ## Concept
 
@@ -102,6 +108,23 @@ curl localhost:3400/health
 ```
 
 Requires `gh`, `jq`, `curl`.
+
+### Build Error Auto-Report
+
+Add to your build script — on failure, error logs are sent straight to your session:
+
+```bash
+#!/bin/bash
+BUILD_OUTPUT=$(npm run build 2>&1)
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  # Send last 30 lines (trim if too long)
+  ERROR=$(echo "$BUILD_OUTPUT" | tail -30 | jq -Rsa .)
+  curl -s -X POST localhost:3400/notify \
+    -H "Content-Type: application/json" \
+    -d "{\"text\":$ERROR,\"source\":\"build\",\"level\":\"error\"}"
+fi
+```
 
 ### Deploy Notification
 
