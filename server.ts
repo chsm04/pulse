@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+// Pulse — local channel plugin for Claude Code
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
