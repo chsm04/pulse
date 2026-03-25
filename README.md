@@ -6,6 +6,8 @@ No Discord, no Telegram — just a single HTTP POST to push messages into your c
 
 **[한국어](./README.ko.md)**
 
+https://github.com/user-attachments/assets/c603b2a6-95da-4cb0-9604-f2f85ec24ca0
+
 ## Why Pulse?
 
 Checking your email every time CI fails, then telling the agent "go check the CI result"?
